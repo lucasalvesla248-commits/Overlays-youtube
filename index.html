@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title></title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+body{font-family:Arial,Helvetica,sans-serif;color:#fff;font-weight:800}
+
+.hud{position:absolute;left:28px;top:22px;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9)}
+.location{font-size:24px;line-height:1.05;letter-spacing:.15px}
+.distance{font-size:30px;line-height:1;margin-top:4px}
+
+/* Hora e temperatura ficam imediatamente acima do chat. */
+.telemetry{
+ position:absolute;left:30px;bottom:calc(min(265px,34vh) + 12px);
+ font-size:19px;line-height:1;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9);
+ letter-spacing:.2px
+}
+
+/* Chat visual: pequeno, limpo, sem caixa, sem bordas e sem iframe. */
+.name-chat{
+ position:absolute;left:28px;bottom:24px;
+ width:min(270px,30vw);height:min(245px,32vh);
+ display:flex;flex-direction:column;justify-content:flex-end;gap:7px;
+ overflow:hidden;pointer-events:none;
+ mask-image:linear-gradient(to bottom,transparent 0%,#000 13%,#000 100%);
+ -webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 13%,#000 100%);
+}
+.chat-name{
+ width:max-content;max-width:100%;
+ font-size:19px;line-height:1.05;
+ letter-spacing:.1px;
+ text-shadow:0 2px 5px rgba(0,0,0,.98),0 0 2px rgba(0,0,0,.95);
+ transform:translateY(8px);opacity:0;
+ animation:nameIn .35s ease-out forwards;
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.chat-name.old{opacity:.72;font-size:18px}
+@keyframes nameIn{to{transform:translateY(0);opacity:1}}
+
+/* Cores inspiradas no exemplo, mantendo leitura sem poluir a imagem. */
+.c-red{color:#ff4b45}.c-blue{color:#24b9ef}.c-yellow{color:#ffc02e}.c-purple{color:#bd59ff}.c-green{color:#39e61c}
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="location" id="location">LOCALIZANDO...</div>
+  <div class="distance" id="distance">--</div>
+</div>
+
+<div class="telemetry">
+  <span id="time">--:--</span>&nbsp;&nbsp;<span id="temp">--°C</span>
+</div>
+
+<div class="name-chat" id="nameChat" aria-label="Chat ao vivo"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const loc=$('location'), dist=$('distance'), tm=$('time'), temp=$('temp'), nameChat=$('nameChat');
+
+/*
+  Nomes exibidos no overlay. Para trocar sem editar o arquivo, use:
+  ?names=Jay,Min,Eddie,Maria
+*/
+const defaultNames=[
+  ['Jay','c-red'],
+  ['Min','c-blue'],
+  ['LucasFPS','c-yellow'],
+  ['Maria','c-purple'],
+  ['Eddie','c-green'],
+  ['Felipe Gamer','c-red'],
+  ['Sandra','c-blue'],
+  ['RafaBR','c-purple'],
+  ['TioZika','c-yellow']
+];
+
+const params=new URLSearchParams(location.search);
+const custom=params.get('names');
+const names=custom
+  ? custom.split(',').map((n,i)=>[n.trim(),['c-red','c-blue','c-yellow','c-purple','c-green'][i%5]]).filter(x=>x[0])
+  : defaultNames;
+
+let nameIndex=0;
+function addName(){
+  if(!names.length)return;
+  const [name,cls]=names[nameIndex%names.length];
+  nameIndex++;
+  const el=document.createElement('div');
+  el.className=`chat-name ${cls}`;
+  el.textContent=name;
+  nameChat.appendChild(el);
+  while(nameChat.children.length>7)nameChat.removeChild(nameChat.firstElementChild);
+  [...nameChat.children].forEach((item,i)=>{item.classList.toggle('old',i<Math.max(0,nameChat.children.length-3));});
+}
+
+/* Entrada inicial e fluxo contínuo de nomes, sem bordas ou painel. */
+for(let i=0;i<5;i++)setTimeout(addName,i*240);
+setInterval(addName,2600);
+
+let lastWeather=0,lastGeo=0;
+function clock(){
+  const d=new Date();
+  tm.textContent=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',hour12:false});
+}
+clock();setInterval(clock,1000);
+
+async function reverse(lat,lon){
+ if(Date.now()-lastGeo<30000)return; lastGeo=Date.now();
+ try{
+  const u=`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
+  const j=await (await fetch(u)).json(),a=j.address||{};
+  const road=a.road||a.highway||a.route||'',city=a.city||a.town||a.municipality||a.village||'';
+  const state=a.state_code||a.state||'',place=[city,state].filter(Boolean).join(', ');
+  loc.textContent=road?(place?road+', '+place:road):(place||j.display_name||'LOCALIZAÇÃO');
+ }catch(e){}
+}
+
+async function weather(lat,lon){
+ if(Date.now()-lastWeather<60000)return; lastWeather=Date.now();
+ try{
+  const u=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&timezone=auto`;
+  const j=await (await fetch(u)).json();
+  if(j.current?.temperature_2m!=null)temp.textContent=Math.round(j.current.temperature_2m)+'°C';
+ }catch(e){}
+}
+
+function pos(p){
+ const {latitude:lat,longitude:lon}=p.coords;
+ reverse(lat,lon);weather(lat,lon);
+ if(p.coords.speed!=null&&p.coords.speed>=0)dist.textContent=Math.round(p.coords.speed*3.6)+' km/h';
+ else dist.textContent='GPS ATIVO';
+}
+function err(){loc.textContent='GPS INDISPONÍVEL';dist.textContent='--'}
+if(navigator.geolocation)navigator.geolocation.watchPosition(pos,err,{enableHighAccuracy:true,maximumAge:5000,timeout:15000});else err();
+</script>
+</body>
+</html>

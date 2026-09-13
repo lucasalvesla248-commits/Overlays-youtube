@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>IRL Pro HUD</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+body{font-family:Arial,Helvetica,sans-serif;color:#fff;font-weight:800}
+.hud{position:absolute;left:28px;top:22px;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9)}
+.location{font-size:24px;line-height:1.05;letter-spacing:.15px}
+.distance{font-size:30px;line-height:1;margin-top:4px}
+.telemetry{position:absolute;left:30px;bottom:calc(min(265px,34vh) + 12px);font-size:19px;line-height:1;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9);letter-spacing:.2px}
+</style>
+</head>
+<body>
+<div class="hud"><div class="location" id="location">LOCALIZANDO...</div><div class="distance" id="distance">--</div></div>
+<div class="telemetry"><span id="time">--:--</span>&nbsp;&nbsp;<span id="temp">--°C</span></div>
+<script>
+const loc=document.getElementById('location');
+const dist=document.getElementById('distance');
+const tm=document.getElementById('time');
+const temp=document.getElementById('temp');
+let lastWeather=0,lastGeo=0;
+function clock(){tm.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',hour12:false})}
+clock();setInterval(clock,1000);
+async function reverse(lat,lon){
+ if(Date.now()-lastGeo<30000)return;
+ lastGeo=Date.now();
+ try{
+  const j=await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`)).json();
+  const a=j.address||{};
+  const road=a.road||a.highway||a.route||'';
+  const city=a.city||a.town||a.municipality||a.village||'';
+  const state=a.state_code||a.state||'';
+  const place=[city,state].filter(Boolean).join(', ');
+  loc.textContent=road?(place?road+', '+place:road):(place||j.display_name||'LOCALIZAÇÃO');
+ }catch(e){}
+}
+async function weather(lat,lon){
+ if(Date.now()-lastWeather<60000)return;
+ lastWeather=Date.now();
+ try{
+  const j=await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&timezone=auto`)).json();
+  if(j.current?.temperature_2m!=null)temp.textContent=Math.round(j.current.temperature_2m)+'°C';
+ }catch(e){}
+}
+function pos(p){
+ const {latitude:lat,longitude:lon}=p.coords;
+ reverse(lat,lon);weather(lat,lon);
+ dist.textContent=p.coords.speed!=null&&p.coords.speed>=0?Math.round(p.coords.speed*3.6)+' km/h':'GPS ATIVO';
+}
+function err(){loc.textContent='GPS INDISPONÍVEL';dist.textContent='--'}
+if(navigator.geolocation)navigator.geolocation.watchPosition(pos,err,{enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+else err();
+</script>
+</body>
+</html>

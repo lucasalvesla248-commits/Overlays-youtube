@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>IRL Pro HUD — YouTube Chat</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}body{font-family:Arial,Helvetica,sans-serif;color:#fff;font-weight:800}.hud{position:absolute;left:28px;top:22px;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9)}.location{font-size:24px;line-height:1.05}.distance{font-size:30px;line-height:1;margin-top:4px}.telemetry{position:absolute;left:30px;bottom:calc(min(265px,34vh) + 12px);font-size:19px;line-height:1;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9)}.name-chat{position:absolute;left:28px;bottom:24px;width:min(420px,52vw);height:min(245px,32vh);display:flex;flex-direction:column;justify-content:flex-end;gap:5px;overflow:hidden;pointer-events:none;mask-image:linear-gradient(to bottom,transparent 0%,#000 13%,#000 100%);-webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 13%,#000 100%)}.chat-line{font-size:18px;line-height:1.12;text-shadow:0 2px 5px rgba(0,0,0,.98),0 0 2px rgba(0,0,0,.95);transform:translateY(8px);opacity:0;animation:in .35s ease-out forwards;word-break:break-word}.chat-line.old{opacity:.72}.chat-name{margin-right:6px;white-space:nowrap}.chat-msg{font-weight:700;color:#fff}.c-red{color:#ff4b45}.c-blue{color:#24b9ef}.c-yellow{color:#ffc02e}.c-purple{color:#bd59ff}.c-green{color:#39e61c}@keyframes in{to{transform:translateY(0);opacity:1}}
+</style></head>
+<body>
+<div class="hud"><div class="location" id="location">LOCALIZANDO...</div><div class="distance" id="distance">--</div></div>
+<div class="telemetry"><span id="time">--:--</span>&nbsp;&nbsp;<span id="temp">--°C</span></div>
+<div class="name-chat" id="nameChat" aria-label="Chat ao vivo"></div>
+<script>
+/* Sem Google Apps Script. A API do YouTube é chamada diretamente pelo navegador. */
+const CONFIG={youtubeVideoId:'C8_ziuhXJUE',apiKey:'COLE_SUA_CHAVE_AQUI',maxMessages:7,pollMs:5000};
+const $=id=>document.getElementById(id),loc=$('location'),dist=$('distance'),tm=$('time'),temp=$('temp'),nameChat=$('nameChat');
+const palette=['c-red','c-blue','c-yellow','c-purple','c-green'];let colorIndex=0,lastWeather=0,lastGeo=0;
+function addMessage(name,message){if(!name)return;const el=document.createElement('div');el.className='chat-line';const n=document.createElement('span');n.className='chat-name '+palette[colorIndex++%palette.length];n.textContent=name+':';const m=document.createElement('span');m.className='chat-msg';m.textContent=' '+(message||'');el.append(n,m);nameChat.appendChild(el);while(nameChat.children.length>CONFIG.maxMessages)nameChat.removeChild(nameChat.firstElementChild);[...nameChat.children].forEach((x,i)=>x.classList.toggle('old',i<Math.max(0,nameChat.children.length-3)));}
+function clock(){const d=new Date();tm.textContent=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',hour12:false})}clock();setInterval(clock,1000);
+async function reverse(lat,lon){if(Date.now()-lastGeo<30000)return;lastGeo=Date.now();try{const j=await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`)).json(),a=j.address||{},road=a.road||a.highway||a.route||'',city=a.city||a.town||a.municipality||a.village||'',state=a.state_code||a.state||'',place=[city,state].filter(Boolean).join(', ');loc.textContent=road?(place?road+', '+place:road):(place||j.display_name||'LOCALIZAÇÃO')}catch(e){}}
+async function weather(lat,lon){if(Date.now()-lastWeather<60000)return;lastWeather=Date.now();try{const j=await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&timezone=auto`)).json();if(j.current?.temperature_2m!=null)temp.textContent=Math.round(j.current.temperature_2m)+'°C'}catch(e){}}
+function pos(p){const {latitude:lat,longitude:lon}=p.coords;reverse(lat,lon);weather(lat,lon);dist.textContent=p.coords.speed!=null&&p.coords.speed>=0?Math.round(p.coords.speed*3.6)+' km/h':'GPS ATIVO'}function err(){loc.textContent='GPS INDISPONÍVEL';dist.textContent='--'}
+if(navigator.geolocation)navigator.geolocation.watchPosition(pos,err,{enableHighAccuracy:true,maximumAge:5000,timeout:15000});else err();
+const params=new URLSearchParams(location.search),videoId=params.get('video')||CONFIG.youtubeVideoId;let liveChatId=null,nextPageToken=null,running=false;const seen=new Set();
+async function yt(path){const u=new URL('https://www.googleapis.com/youtube/v3/'+path);u.searchParams.set('key',CONFIG.apiKey);const r=await fetch(u);const j=await r.json();if(!r.ok||j.error)throw new Error(j.error?.message||'Erro na YouTube API');return j}
+async function initChat(){const v=await yt('videos?part=liveStreamingDetails&id='+encodeURIComponent(videoId));liveChatId=v.items?.[0]?.liveStreamingDetails?.activeLiveChatId;if(!liveChatId)throw new Error('A live não está ao vivo ou não possui chat ativo.');running=true;pollChat()}
+async function pollChat(){if(!running)return;try{let path='liveChat/messages?part=snippet,authorDetails&maxResults=200&liveChatId='+encodeURIComponent(liveChatId);if(nextPageToken)path+='&pageToken='+encodeURIComponent(nextPageToken);const d=await yt(path);nextPageToken=d.nextPageToken||nextPageToken;(d.items||[]).forEach(i=>{if(!seen.has(i.id)){seen.add(i.id);addMessage(i.authorDetails?.displayName||'YouTube',i.snippet?.displayMessage||'')}});if(seen.size>1500){const a=[...seen];a.slice(0,700).forEach(x=>seen.delete(x))}setTimeout(pollChat,Math.max(1500,Math.min(d.pollingIntervalMillis||CONFIG.pollMs,15000)))}catch(e){console.warn(e);setTimeout(pollChat,CONFIG.pollMs)}}
+if(CONFIG.apiKey&&CONFIG.apiKey!=='AIzaSyCJ9VqJoEMIbg5uSANrXXX8xyZffzWhJSU')initChat().catch(e=>console.warn(e));else console.warn('Coloque sua chave da YouTube Data API em CONFIG.apiKey.');
+</script></body></html>

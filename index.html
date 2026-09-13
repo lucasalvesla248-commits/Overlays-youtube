@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>IRL Pro HUD + YouTube Chat</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}body{font-family:Arial,Helvetica,sans-serif;color:#fff;font-weight:800}
+.hud{position:absolute;left:28px;top:22px;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9)}
+.location{font-size:24px;line-height:1.05;letter-spacing:.15px}.distance{font-size:30px;line-height:1;margin-top:4px}
+.telemetry{position:absolute;left:30px;bottom:calc(min(265px,34vh) + 12px);font-size:19px;line-height:1;text-shadow:0 2px 5px rgba(0,0,0,.95),0 0 2px rgba(0,0,0,.9);letter-spacing:.2px}
+#chat{position:absolute;left:28px;bottom:24px;width:min(430px,48vw);height:min(245px,32vh);display:flex;flex-direction:column;justify-content:flex-end;gap:7px;overflow:hidden;pointer-events:none;mask-image:linear-gradient(to bottom,transparent 0%,#000 13%,#000 100%);-webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 13%,#000 100%)}
+.msg{display:flex;align-items:flex-start;gap:7px;font-size:18px;line-height:1.12;text-shadow:0 2px 5px rgba(0,0,0,.98),0 0 2px rgba(0,0,0,.95);word-break:break-word;animation:in .25s ease-out both}.yt{flex:0 0 auto;width:18px;height:13px;margin-top:3px;border-radius:4px;background:#f00;position:relative}.yt:after{content:"";position:absolute;left:7px;top:3px;border-left:5px solid #fff;border-top:3.5px solid transparent;border-bottom:3.5px solid transparent}.name{font-weight:800}.text{font-weight:500;color:#fff}@keyframes in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+#status{position:fixed;left:10px;top:10px;font-size:12px;color:#fff;background:rgba(0,0,0,.65);padding:5px 7px;border-radius:6px;display:none;z-index:20}
+#setup{position:fixed;inset:0;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;padding:18px;z-index:30}.card{width:min(440px,100%);background:#171717;border:1px solid #444;border-radius:14px;padding:18px;box-shadow:0 8px 30px #000}.card h2{margin:0 0 8px;font-size:20px}.card p{margin:7px 0 12px;color:#ccc;font-size:14px;line-height:1.35}input{width:100%;padding:12px;border-radius:9px;border:1px solid #555;background:#0d0d0d;color:#fff;font-size:14px;outline:none}button{margin-top:10px;width:100%;padding:12px;border:0;border-radius:9px;background:#e00;color:#fff;font-weight:700;font-size:15px}.small{margin-top:8px;color:#999;font-size:11px}#error{color:#ff8d8d;font-size:12px;margin-top:8px;display:none}#gear{position:fixed;right:8px;top:8px;z-index:25;border:0;background:rgba(0,0,0,.45);color:#fff;width:28px;height:28px;border-radius:50%;padding:0;font-size:16px;display:none}
+</style></head>
+<body>
+<div class="hud"><div class="location" id="location">LOCALIZANDO...</div><div class="distance" id="distance">--</div></div>
+<div class="telemetry"><span id="time">--:--</span>&nbsp;&nbsp;<span id="temp">--°C</span></div>
+<div id="chat" aria-label="Chat ao vivo"></div><div id="status"></div><button id="gear" title="Configurar">⚙</button>
+<div id="setup"><div class="card"><h2>Configurar YouTube Chat</h2><p>Cole sua chave da <b>YouTube Data API v3</b>. Ela fica salva somente neste navegador/WebView.</p><input id="key" type="password" placeholder="AIza..." autocomplete="off"><button id="save">Salvar e testar</button><div id="error"></div><div class="small">Depois desta configuração, o overlay tenta localizar automaticamente a live atual do seu canal. Não precisa trocar o link no IRL Pro a cada live.</div></div></div>
+<script>
+const $=id=>document.getElementById(id);
+const params=new URLSearchParams(location.search);
+const STORE_KEY='irlpro_youtube_api_key';
+// ID usado somente como "semente" para descobrir o canal. Depois o overlay procura a live atual automaticamente.
+const SEED_VIDEO_ID=params.get('video')||localStorage.getItem('irlpro_seed_video')||'1VEbQpphNUY';
+const CONFIG={maxMessages:7,pollMs:5000,discoverMs:30000};
+const keyStore=()=>localStorage.getItem(STORE_KEY)||'';
+function showSetup(msg=''){ $('setup').style.display='flex';$('gear').style.display='none';$('error').style.display=msg?'block':'none';$('error').textContent=msg;$('key').value=keyStore(); }
+function hideSetup(){ $('setup').style.display='none';$('gear').style.display='block'; }
+$('gear').onclick=()=>showSetup();
+function status(t){$('status').textContent=t;$('status').style.display=t?'block':'none'}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function render(ms){const b=$('chat');b.innerHTML='';ms.slice(-CONFIG.maxMessages).forEach(m=>{const r=document.createElement('div');r.className='msg';r.innerHTML='<span class="yt"></span><span><span class="name" style="color:'+esc(m.color)+'">'+esc(m.name)+'</span><span class="text">: '+esc(m.message)+'</span></span>';b.appendChild(r)})}
+async function api(url){const r=await fetch(url,{cache:'no-store'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d?.error?.message||('HTTP '+r.status));return d}
+let channelId=localStorage.getItem('irlpro_youtube_channel_id')||null;
+let currentVideoId=localStorage.getItem('irlpro_youtube_current_video')||SEED_VIDEO_ID;
+let liveChatId=null,nextPageToken=null,lastDiscover=0;
+async function discoverChannel(){
+ const key=keyStore(); if(!key)throw new Error('Nenhuma chave configurada.');
+ const u='https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id='+encodeURIComponent(currentVideoId)+'&key='+encodeURIComponent(key);
+ const d=await api(u); if(!d.items?.length)throw new Error('Não encontrei a live semente.');
+ channelId=d.items[0].snippet?.channelId||channelId; if(channelId)localStorage.setItem('irlpro_youtube_channel_id',channelId);
+}
+async function discoverLive(){
+ const key=keyStore();if(!key)throw new Error('Nenhuma chave configurada.');
+ // Primeiro tenta diretamente o vídeo-semente. Isso faz a configuração funcionar
+ // imediatamente mesmo quando a busca de lives do canal demora para indexar a live.
+ const seed=SEED_VIDEO_ID;
+ const seedUrl='https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id='+encodeURIComponent(seed)+'&key='+encodeURIComponent(key);
+ const seedData=await api(seedUrl);
+ const seedItem=seedData.items?.[0];
+ const seedChat=seedItem?.liveStreamingDetails?.activeLiveChatId||null;
+ if(seedChat){
+   const id=seedItem.id;
+   if(id!==currentVideoId){currentVideoId=id;localStorage.setItem('irlpro_youtube_current_video',id);liveChatId=null;nextPageToken=null;window.__msgs=[];render([])}
+   liveChatId=seedChat;nextPageToken=null;lastDiscover=Date.now();return;
+ }
+ // Se a semente não está mais ao vivo, descobre o canal e procura a live atual.
+ if(!channelId)channelId=seedItem?.snippet?.channelId||null;
+ if(!channelId)await discoverChannel();
+ const u='https://www.googleapis.com/youtube/v3/search?part=id&channelId='+encodeURIComponent(channelId)+'&eventType=live&type=video&maxResults=5&key='+encodeURIComponent(key);
+ const d=await api(u); const id=d.items?.[0]?.id?.videoId;
+ if(!id)throw new Error('Nenhuma live ativa encontrada.');
+ if(id!==currentVideoId){currentVideoId=id;localStorage.setItem('irlpro_youtube_current_video',id);liveChatId=null;nextPageToken=null;window.__msgs=[];render([])}
+ const u2='https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id='+encodeURIComponent(currentVideoId)+'&key='+encodeURIComponent(key);
+ const d2=await api(u2);liveChatId=d2.items?.[0]?.liveStreamingDetails?.activeLiveChatId||null;if(!liveChatId)throw new Error('A live está sem chat disponível.');
+ nextPageToken=null;lastDiscover=Date.now();
+}
+async function poll(){
+ if(!liveChatId || Date.now()-lastDiscover>CONFIG.discoverMs)await discoverLive();
+ const key=keyStore();let u='https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet,authorDetails&liveChatId='+encodeURIComponent(liveChatId)+'&maxResults=200&key='+encodeURIComponent(key);if(nextPageToken)u+='&pageToken='+encodeURIComponent(nextPageToken);
+ const d=await api(u);nextPageToken=d.nextPageToken||nextPageToken;
+ const colors=['#ff4d4d','#4da6ff','#66dd88','#ffd24d','#d084ff','#ff7ac8'];const ms=(d.items||[]).map((x,i)=>({id:x.id,name:x.authorDetails?.displayName||'',message:x.snippet?.displayMessage||'',color:colors[i%colors.length]}));
+ if(ms.length){const old=window.__msgs||[];window.__msgs=old.concat(ms).filter((m,i,a)=>a.findIndex(z=>z.id===m.id)===i).slice(-CONFIG.maxMessages);render(window.__msgs)}
+ status('');hideSetup();
+}
+async function start(){try{status('Conectando ao YouTube…');await poll()}catch(e){console.warn(e);showSetup(e.message||'Não foi possível conectar.')}}
+$('save').onclick=()=>{const k=$('key').value.trim();if(!k){showSetup('Cole a chave antes de salvar.');return}localStorage.setItem(STORE_KEY,k);localStorage.setItem('irlpro_seed_video',SEED_VIDEO_ID);window.__msgs=[];liveChatId=null;start()};
+window.addEventListener('load',()=>{if(!keyStore())showSetup();else start();setInterval(()=>{if(keyStore())poll().catch(e=>status(e.message||'Erro no YouTube'))},CONFIG.pollMs)});
+
+// HUD
+const loc=$('location'),dist=$('distance'),tm=$('time'),temp=$('temp');let lastWeather=0,lastGeo=0;
+function clock(){tm.textContent=new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',hour12:false})}clock();setInterval(clock,1000);
+async function reverse(lat,lon){if(Date.now()-lastGeo<30000)return;lastGeo=Date.now();try{const j=await (await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`)).json(),a=j.address||{};const road=a.road||a.highway||a.route||'',city=a.city||a.town||a.municipality||a.village||'',state=a.state_code||a.state||'',place=[city,state].filter(Boolean).join(', ');loc.textContent=road?(place?road+', '+place:road):(place||j.display_name||'LOCALIZAÇÃO')}catch(e){}}
+async function weather(lat,lon){if(Date.now()-lastWeather<60000)return;lastWeather=Date.now();try{const j=await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m&timezone=auto`)).json();if(j.current?.temperature_2m!=null)temp.textContent=Math.round(j.current.temperature_2m)+'°C'}catch(e){}}
+function pos(p){const {latitude:lat,longitude:lon}=p.coords;reverse(lat,lon);weather(lat,lon);dist.textContent=p.coords.speed!=null&&p.coords.speed>=0?Math.round(p.coords.speed*3.6)+' km/h':'GPS ATIVO'}function err(){loc.textContent='GPS INDISPONÍVEL';dist.textContent='--'}
+if(navigator.geolocation)navigator.geolocation.watchPosition(pos,err,{enableHighAccuracy:true,maximumAge:5000,timeout:15000});else err();
+</script></body></html>
